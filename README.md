@@ -4,6 +4,11 @@ Serialize is a generic serialization/deserialization framework for Beef.
 
 Compile-time code generation is used for de-/serializing, so there is no need for reflection.
 
+### Supported formats:
+
+- [JSON](https://github.com/RogueMacro/json)
+- [TOML](https://github.com/RogueMacro/toml)
+
 ## Usage
 
 To make a type serializable, add the `[Serializable]` attribute to that type. This will automatically generate an implementation for `ISerializable`. Optionally, `ISerializable` can be implemented manually.
