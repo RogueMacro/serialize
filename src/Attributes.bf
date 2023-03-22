@@ -110,8 +110,7 @@ namespace Serialize
 				{{
 					Self self = {(type.IsValueType ? "" : "new ")}Self();
 					bool ok = false;
-					defer {{ if (!ok) delete self; }}
-
+					{(type.IsValueType ? "" : "defer {{ if (!ok) delete self; }}\n")}
 					System.Collections.List<StringView> fieldsLeft = scope .(){{ {fieldList} }};
 
 					Try!(deserializer.DeserializeStructStart({fieldCount}));
