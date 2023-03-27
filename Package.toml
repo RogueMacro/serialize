@@ -1,4 +1,4 @@
 [Package]
 Name = "Serialize"
-Version = "0.1.0"
+Version = "0.1.1"
 Description = "De-/serialization framework"
