@@ -11,6 +11,9 @@ namespace Serialize.Implementation
 		DeserializeError Error { get; set; }
 		void SetError(DeserializeError error);
 
+		void PushState();
+		void PopState();
+
 		Result<void> DeserializeStructStart(int size);
 		Result<void> DeserializeStructEnd();
 		Result<void> DeserializeStructField(

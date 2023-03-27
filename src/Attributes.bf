@@ -7,24 +7,21 @@ namespace Serialize
 	[AttributeUsage(.Types)]
 	struct SerializableAttribute : Attribute, IOnTypeInit
 	{
-		const StringView[?] NO_SERIALIZE_MEMBERS = StringView[] ("mClassVData", "mDbgAllocInfo");
+		public String Tag;
 
 		[Comptime]
 		bool IsSerializableField(FieldInfo field)
 		{
 			let type = field.FieldType;
 
-			if (NO_SERIALIZE_MEMBERS.Contains(field.Name))
-				return false;
-
 			if (type.IsPointer)
 				return false;
 
 			if (field.GetCustomAttribute<SerializeFieldAttribute>() case .Ok(let attr))
-			{
-				if (!attr.Serialize)
-					return false;
-			}
+				return attr.Serialize;
+
+			if (field.IsStatic || field.IsConst || field.IsPrivate)
+				return false;
 
 			return true;
 		}
@@ -115,7 +112,7 @@ namespace Serialize
 
 					Try!(deserializer.DeserializeStructStart({fieldCount}));
 
-					delegate Result<void, Serialize.FieldDeserializeError>(StringView) map_field = scope [&] (field) => {{
+					delegate Result<void, Serialize.FieldDeserializeError>(StringView) mapField = scope [&] (field) => {{
 						switch (field)
 						{{
 
@@ -125,16 +122,6 @@ namespace Serialize
 			{
 				if (!IsSerializableField(field))
 					continue;
-
-				String valueRef;
-				if (field.FieldType.IsInteger)
-				{
-					String systemType = scope .()..Append(field.FieldType);
-					systemType[0] = systemType[0].ToUpper;
-					valueRef = scope:: $"(System.{systemType}*)&self.{field.Name}";
-				}
-				else
-					valueRef = scope:: $"&self.{field.Name}";
 
 				if (field.FieldType.IsNullable || field.FieldType.IsObject)
 					Compiler.EmitTypeBody(type,
@@ -178,7 +165,7 @@ namespace Serialize
 					bool firstField = true;
 					for (int i in 0..<{fieldCount})
 					{{
-						Try!(deserializer.DeserializeStructField(map_field, fieldsLeft, firstField));
+						Try!(deserializer.DeserializeStructField(mapField, fieldsLeft, firstField));
 						firstField = false;
 					}}
 
@@ -369,6 +356,10 @@ namespace Serialize
 		[Comptime]
 		void WriteSerializeForEnum(Type type)
 		{
+			String tag = null;
+			if (type.GetCustomAttribute<SerializableAttribute>() case .Ok(let attr))
+				tag = attr.Tag;
+
 			Compiler.EmitTypeBody(type,
 				scope $"""
 				public void Serialize<S>(S serializer)
@@ -381,11 +372,65 @@ namespace Serialize
 
 			for (let field in type.GetFields())
 			{
-				Compiler.EmitTypeBody(type,
-					scope $"""
-						case .{field.Name}: serializer.SerializeString("{field.Name}");
+				if (field.Name == "$payload" || field.Name == "$discriminator")
+					continue;
 
-					""");
+				if (type.IsUnion)
+				{
+					String tupleValues = scope .();
+					bool firstTupleValue = true;
+					for (let tupleField in field.FieldType.GetFields())
+					{
+						if (!firstTupleValue)
+							tupleValues.Append(", ");
+						tupleValues.AppendF("let _{}", tupleField.Name);
+						firstTupleValue = false;
+					}
+
+					Compiler.EmitTypeBody(type,
+						scope $"""
+							case .{field.Name}({tupleValues}):
+								serializer.SerializeMapStart({field.FieldType.FieldCount});
+
+						""");
+
+					String first = "true";
+					if (tag != null)
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+									serializer.SerializeMapEntry("{tag}", "{field.Name}", true);
+
+							""");
+
+						first = "false";
+					}
+					
+					for (let tupleField in field.FieldType.GetFields())
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+									serializer.SerializeMapEntry("{tupleField.Name}", _{tupleField.Name}, {first});
+
+							""");
+						first = "false";
+					}
+
+					Compiler.EmitTypeBody(type,
+						scope $"""
+								serializer.SerializeMapEnd();
+
+						""");
+				}
+				else
+				{
+					Compiler.EmitTypeBody(type,
+						scope $"""
+							case .{field.Name}:
+								serializer.SerializeString("{field.Name}");
+
+						""");
+				}
 			}
 
 			Compiler.EmitTypeBody(type,
@@ -396,32 +441,188 @@ namespace Serialize
 				public static Result<Self> Deserialize<D>(D deserializer)
 					where D : Serialize.Implementation.IDeserializer
 				{{
-					let start = deserializer.Reader.Position + 1;
-					let str = Try!(deserializer.DeserializeString());
-					defer delete str;
-					switch (str)
-					{{
-
+				
 				""");
 
-			for (let field in type.GetFields())
+			if (type.IsUnion)
 			{
 				Compiler.EmitTypeBody(type,
 					scope $"""
-						case "{field.Name}": return .{field.Name};
+						let pos = deserializer.Reader.Position;
+						Result<Self> result = default;
+
+
+					""");
+
+
+
+				for (let field in type.GetFields())
+				{
+					if (field.Name == "$payload" || field.Name == "$discriminator")
+						continue;
+
+					bool needsOk = false;
+					for (let tupleField in field.FieldType.GetFields())
+					{
+						if (!tupleField.FieldType.IsValueType)
+						{
+							needsOk = true;
+							break;
+						}
+					}
+
+					Compiler.EmitTypeBody(type,
+						scope $"""
+							deserializer.Reader.[Friend]Position = pos;
+							deserializer.PushState();
+							result = Deserialize{field.Name}();
+							deserializer.PopState();
+							if (result case .Ok(let val))
+								return val;
+
+							Result<Self> Deserialize{field.Name}()
+							{{{(needsOk ? "\n\t\tbool ok = false;" : "")}
+								Try!(deserializer.DeserializeStructStart({field.FieldType.FieldCount}));
+
+
+						""");
+
+					String tupleValueList = scope .();
+					String tupleFieldList = scope .();
+					bool firstTupleField = true;
+					for (let tupleField in field.FieldType.GetFields())
+					{
+						if (!firstTupleField)
+						{
+							tupleValueList.Append(", ");
+							tupleFieldList.Append(", ");
+						}
+						tupleValueList.AppendF("_{}", tupleField.Name);
+						tupleFieldList.AppendF("\"{}\"", tupleField.Name);
+
+						Compiler.EmitTypeBody(type,
+							scope $"""
+									{tupleField.FieldType} _{tupleField.Name} = default;
+									{(tupleField.FieldType.IsValueType ? "" : scope $"defer {{ if (!ok) delete _{tupleField.Name}; }}\n")}
+							
+							""");
+
+						firstTupleField = false;
+					}
+
+					if (tag != null)
+					{
+						if (!firstTupleField)
+							tupleFieldList.Append(", ");
+						tupleFieldList.AppendF("\"{}\"", tag);
+					}
+
+					Compiler.EmitTypeBody(type,
+						scope $"""
+								System.Collections.List<StringView> fieldsLeft = scope .(){{ {tupleFieldList} }};
+								delegate Result<void, Serialize.FieldDeserializeError>(StringView) mapField = scope [&] (field) => {{
+									switch (field)
+									{{
+
+						""");
+
+					if (tag != null)
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+										case "{tag}":
+											let tag = deserializer.DeserializeString();
+											if (tag case .Err)
+												return .Err(.DeserializationError);
+											defer delete tag.Value;
+											if (tag != "{field.Name}")
+												return .Err(.DeserializationError);
+											fieldsLeft.Remove("{tag}");
+											return .Ok;
+
+							""");
+					}
+
+					for (let tupleField in field.FieldType.GetFields())
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+										case "{tupleField.Name}":
+											let result = {tupleField.FieldType}.Deserialize(deserializer);
+											if (result case .Err)
+												return .Err(.DeserializationError);
+											_{tupleField.Name} = (.)result.Get();
+											fieldsLeft.Remove("{tupleField.Name}");
+											return .Ok;
+
+							""");
+					}
+
+					Compiler.EmitTypeBody(type,
+						scope $"""
+									}}
+
+									return .Err(.UnknownField);
+								}};
+
+								bool first = true;
+								for (let i < {field.FieldType.FieldCount + (tag != null ? 1 : 0)})
+								{{
+									Try!(deserializer.DeserializeStructField(mapField, fieldsLeft, first));
+									first = false;
+								}}
+
+								Try!(deserializer.DeserializeStructEnd());
+								{(needsOk ? "\n\t\tok = true;" : "")}
+								return .Ok(.{field.Name}({tupleValueList}));
+							}}
+
+
+						""");
+				}
+
+				Compiler.EmitTypeBody(type,
+					scope $"""
+						DeserializeError error = new .(new $"Struct doesn't match any enum fields", deserializer, 1, pos);
+						deserializer.SetError(error);
+						return .Err;
 
 					""");
 			}
+			else
+			{
+				Compiler.EmitTypeBody(type,
+					scope $"""
+						let start = deserializer.Reader.Position + 1;
+						let str = Try!(deserializer.DeserializeString());
+						defer delete str;
+						switch (str)
+						{{
 
+					""");
+
+				for (let field in type.GetFields())
+				{
+					Compiler.EmitTypeBody(type,
+						scope $"""
+							case "{field.Name}": return .{field.Name};
+
+						""");
+				}
+
+				Compiler.EmitTypeBody(type,
+					scope $"""
+						}}
+	
+						let end = deserializer.Reader.Position - 1;
+						DeserializeError error = new .(new $"Unknown enum value '{{str}}'", deserializer, end - start, start);
+						deserializer.SetError(error);
+						return .Err;
+					""");
+			}
 
 			Compiler.EmitTypeBody(type,
 				scope $"""
-					}}
-
-					let end = deserializer.Reader.Position - 1;
-					DeserializeError error = new .(new $"Unknown enum value '{{str}}'", deserializer, end - start, start);
-					deserializer.SetError(error);
-					return .Err;
 				}}
 				""");
 		}
@@ -432,7 +633,7 @@ namespace Serialize
 			let generic = type as SpecializedGenericType;
 
 			return
-				type.IsPrimitive || type.IsEnum ||
+				type.IsPrimitive || (type.IsEnum && !type.IsUnion) ||
 				type == typeof(String) || type == typeof(DateTime) ||
 				(generic != null &&
 				generic.UnspecializedType == typeof(Nullable<>) &&
