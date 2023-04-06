@@ -12,6 +12,13 @@ namespace Serialize
 		static Result<Self> Deserialize<D>(D deserializer)
 			where D : IDeserializer;
 	}
+
+	interface ISerializableKey : ISerializable, IHashable
+	{
+		void ToKey(String buffer);
+
+		static Result<Self> Parse(StringView str);
+	}
 }
 
 namespace System
@@ -45,7 +52,7 @@ namespace System
 		}
 	}
 
-	extension String : ISerializable
+	extension String : ISerializableKey
 	{
 		public void Serialize<S>(S serializer)
 			where S : ISerializer
@@ -57,6 +64,16 @@ namespace System
 			where D : IDeserializer
 		{
 			return deserializer.DeserializeString();
+		}
+
+		public void ToKey(String buffer)
+		{
+			buffer.Append(this);
+		}
+
+		public static Result<String> Parse(StringView str)
+		{
+			return new String(str);
 		}
 	}
 
@@ -275,7 +292,7 @@ namespace System
 	namespace Collections
 	{
 		extension Dictionary<TKey, TValue> : ISerializable
-			where TKey : String
+			where TKey : ISerializableKey
 			where TValue : ISerializable
 		{
 			public void Serialize<S>(S serializer)

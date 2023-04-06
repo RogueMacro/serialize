@@ -22,7 +22,7 @@ namespace Serialize.Implementation
 			bool first);
 
 		Result<Dictionary<TKey, TValue>> DeserializeMap<TKey, TValue>()
-			where TKey : String
+			where TKey : ISerializableKey
 			where TValue : ISerializable;
 
 		Result<List<T>> DeserializeList<T>()

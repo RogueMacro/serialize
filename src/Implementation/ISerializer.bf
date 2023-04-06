@@ -12,8 +12,9 @@ namespace Serialize.Implementation
 		SerializeOrder SerializeOrder { get; }
 
 		void SerializeMapStart(int size);
-		void SerializeMapEntry<T>(String key, T value, bool first)
-			where T : ISerializable;
+		void SerializeMapEntry<TKey, TValue>(TKey key, TValue value, bool first)
+			where TKey : ISerializableKey
+			where TValue : ISerializable;
 		void SerializeMapEnd();
 
 		void SerializeList<T>(List<T> list)
