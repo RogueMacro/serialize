@@ -481,100 +481,125 @@ namespace Serialize
 								return val;
 
 							Result<Self> Deserialize{field.Name}()
-							{{{(needsOk ? "\n\t\tbool ok = false;" : "")}
-								Try!(deserializer.DeserializeStructStart({field.FieldType.FieldCount}));
-
-
+							{{
 						""");
 
-					String tupleValueList = scope .();
-					String tupleFieldList = scope .();
-					bool firstTupleField = true;
-					for (let tupleField in field.FieldType.GetFields())
+					if (field.FieldType.FieldCount == 1)
 					{
-						if (!firstTupleField)
+						for (let singleField in field.FieldType.GetFields())
 						{
-							tupleValueList.Append(", ");
-							tupleFieldList.Append(", ");
+							Compiler.EmitTypeBody(type,
+								scope $"""
+
+										let value = Try!({singleField.FieldType}.Deserialize(deserializer));
+										return .Ok(.{field.Name}((.)value));
+
+								""");
 						}
-						tupleValueList.AppendF("_{}", tupleField.Name);
-						tupleFieldList.AppendF("\"{}\"", tupleField.Name);
-
+					}
+					else
+					{
 						Compiler.EmitTypeBody(type,
 							scope $"""
-									{tupleField.FieldType} _{tupleField.Name} = default;
-									{(tupleField.FieldType.IsValueType ? "" : scope $"defer {{ if (!ok) delete _{tupleField.Name}; }}\n")}
-							
+								{(needsOk ? "\n\t\tbool ok = false;" : "")}
+									Try!(deserializer.DeserializeStructStart({field.FieldType.FieldCount}));
+	
+	
 							""");
-
-						firstTupleField = false;
-					}
-
-					if (tag != null)
-					{
-						if (!firstTupleField)
-							tupleFieldList.Append(", ");
-						tupleFieldList.AppendF("\"{}\"", tag);
-					}
-
-					Compiler.EmitTypeBody(type,
-						scope $"""
-								System.Collections.List<StringView> fieldsLeft = scope .(){{ {tupleFieldList} }};
-								delegate Result<void, Serialize.FieldDeserializeError>(StringView) mapField = scope [&] (field) => {{
-									switch (field)
+	
+						String tupleValueList = scope .();
+						String tupleFieldList = scope .();
+						bool firstTupleField = true;
+						for (let tupleField in field.FieldType.GetFields())
+						{
+							if (!firstTupleField)
+							{
+								tupleValueList.Append(", ");
+								tupleFieldList.Append(", ");
+							}
+							tupleValueList.AppendF("_{}", tupleField.Name);
+							tupleFieldList.AppendF("\"{}\"", tupleField.Name);
+	
+							Compiler.EmitTypeBody(type,
+								scope $"""
+										{tupleField.FieldType} _{tupleField.Name} = default;
+										{(tupleField.FieldType.IsValueType ? "" : scope $"defer {{ if (!ok) delete _{tupleField.Name}; }}\n")}
+								
+								""");
+	
+							firstTupleField = false;
+						}
+	
+						if (tag != null)
+						{
+							if (!firstTupleField)
+								tupleFieldList.Append(", ");
+							tupleFieldList.AppendF("\"{}\"", tag);
+						}
+	
+						Compiler.EmitTypeBody(type,
+							scope $"""
+									System.Collections.List<StringView> fieldsLeft = scope .(){{ {tupleFieldList} }};
+									delegate Result<void, Serialize.FieldDeserializeError>(StringView) mapField = scope [&] (field) => {{
+										switch (field)
+										{{
+	
+							""");
+	
+						if (tag != null)
+						{
+							Compiler.EmitTypeBody(type,
+								scope $"""
+											case "{tag}":
+												let tag = deserializer.DeserializeString();
+												if (tag case .Err)
+													return .Err(.DeserializationError);
+												defer delete tag.Value;
+												if (tag != "{field.Name}")
+													return .Err(.DeserializationError);
+												fieldsLeft.Remove("{tag}");
+												return .Ok;
+	
+								""");
+						}
+	
+						for (let tupleField in field.FieldType.GetFields())
+						{
+							Compiler.EmitTypeBody(type,
+								scope $"""
+											case "{tupleField.Name}":
+												let result = {tupleField.FieldType}.Deserialize(deserializer);
+												if (result case .Err)
+													return .Err(.DeserializationError);
+												_{tupleField.Name} = (.)result.Get();
+												fieldsLeft.Remove("{tupleField.Name}");
+												return .Ok;
+	
+								""");
+						}
+	
+						Compiler.EmitTypeBody(type,
+							scope $"""
+										}}
+	
+										return .Err(.UnknownField);
+									}};
+	
+									bool first = true;
+									for (let i < {field.FieldType.FieldCount + (tag != null ? 1 : 0)})
 									{{
-
-						""");
-
-					if (tag != null)
-					{
-						Compiler.EmitTypeBody(type,
-							scope $"""
-										case "{tag}":
-											let tag = deserializer.DeserializeString();
-											if (tag case .Err)
-												return .Err(.DeserializationError);
-											defer delete tag.Value;
-											if (tag != "{field.Name}")
-												return .Err(.DeserializationError);
-											fieldsLeft.Remove("{tag}");
-											return .Ok;
-
-							""");
-					}
-
-					for (let tupleField in field.FieldType.GetFields())
-					{
-						Compiler.EmitTypeBody(type,
-							scope $"""
-										case "{tupleField.Name}":
-											let result = {tupleField.FieldType}.Deserialize(deserializer);
-											if (result case .Err)
-												return .Err(.DeserializationError);
-											_{tupleField.Name} = (.)result.Get();
-											fieldsLeft.Remove("{tupleField.Name}");
-											return .Ok;
-
-							""");
-					}
-
-					Compiler.EmitTypeBody(type,
-						scope $"""
+										Try!(deserializer.DeserializeStructField(mapField, fieldsLeft, first));
+										first = false;
 									}}
+	
+									Try!(deserializer.DeserializeStructEnd());
+									{(needsOk ? "\n\t\tok = true;" : "")}
+									return .Ok(.{field.Name}({tupleValueList}));
+							""");
+						}
 
-									return .Err(.UnknownField);
-								}};
-
-								bool first = true;
-								for (let i < {field.FieldType.FieldCount + (tag != null ? 1 : 0)})
-								{{
-									Try!(deserializer.DeserializeStructField(mapField, fieldsLeft, first));
-									first = false;
-								}}
-
-								Try!(deserializer.DeserializeStructEnd());
-								{(needsOk ? "\n\t\tok = true;" : "")}
-								return .Ok(.{field.Name}({tupleValueList}));
+						Compiler.EmitTypeBody(type,
+							scope $"""
 							}}
 
 
