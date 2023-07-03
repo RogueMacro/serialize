@@ -330,5 +330,29 @@ namespace System
 				return deserializer.DeserializeList<T>();
 			}
 		}
+
+		extension HashSet<T> : ISerializable, ISerializeAsList
+			where T : ISerializable
+		{
+			public void Serialize<S>(S serializer)
+				where S : ISerializer
+			{
+				List<T> list = scope .();
+				for (let item in this)
+					list.Add(item);
+				serializer.SerializeList(list);
+			}
+
+			public static Result<Self> Deserialize<D>(D deserializer)
+				where D : IDeserializer
+			{
+				let list = Try!(deserializer.DeserializeList<T>());
+				HashSet<T> set = new .();
+				for (let item in list)
+					set.Add(item);
+				delete list;
+				return set;
+			}
+		}
 	}
 }

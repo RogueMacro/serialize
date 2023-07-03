@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Reflection;
+using Serialize.Util;
 
 namespace Serialize
 {
@@ -313,9 +314,9 @@ namespace Serialize
 
 			for (let field in type.GetFields())
 			{
-				if (IsPrimitive(field.FieldType))
+				if (Util.IsPrimitive(field.FieldType))
 					primitives.Add(field.Name);
-				else if (IsListOrArray(field.FieldType))
+				else if (Util.IsList(field.FieldType))
 					arrays.Add(field.Name);
 				else
 					maps.Add(field.Name);
@@ -342,7 +343,7 @@ namespace Serialize
 
 			for (let field in type.GetFields())
 			{
-				if (IsPrimitive(field.FieldType) || IsListOrArray(field.FieldType))
+				if (Util.IsPrimitive(field.FieldType) || Util.IsList(field.FieldType))
 					WriteSerializeForField(type, field, ref first);
 				else
 					maps.Add(field.Name);
@@ -650,27 +651,6 @@ namespace Serialize
 				scope $"""
 				}}
 				""");
-		}
-
-		[Comptime]
-		bool IsPrimitive(Type type)
-		{
-			let generic = type as SpecializedGenericType;
-
-			return
-				type.IsPrimitive || (type.IsEnum && !type.IsUnion) ||
-				type == typeof(String) || type == typeof(DateTime) ||
-				(generic != null &&
-				generic.UnspecializedType == typeof(Nullable<>) &&
-				IsPrimitive(generic.GetGenericArg(0)));
-		}
-
-		[Comptime]
-		bool IsListOrArray(Type type)
-		{
-			return type.IsArray ||
-				(type is SpecializedGenericType &&
-				(type as SpecializedGenericType).UnspecializedType == typeof(List<>));
 		}
 	}
 
