@@ -5,7 +5,7 @@ namespace Serialize.Implementation
 {
 	class Reader
 	{
-		public int Position { get; private set; }
+		public int Position { get; set; }
 		public int Length => _content.Length;
 
 		public bool EOF => Position >= _content.Length;

@@ -11,6 +11,9 @@ namespace Serialize
 
 		static Result<Self> Deserialize<D>(D deserializer)
 			where D : IDeserializer;
+
+		[NoShow]
+		Type __SerializeActualType => typeof(Self);
 	}
 
 	interface ISerializableKey : ISerializable, IHashable

@@ -6,7 +6,7 @@ namespace Serialize.Util
 {
 	static class Util
 	{
-		public static bool IsPrimitive(Type type)
+		public static bool IsPrimitiveStrict(Type type)
 		{
 			for (let i in type.Interfaces)
 			{
@@ -14,17 +14,27 @@ namespace Serialize.Util
 					return true;
 			}
 
+			if (type.IsEnum && type.IsUnion)
+				return false;
+
 			let generic = type as SpecializedGenericType;
 
 			return type.IsPrimitive ||
-				(type.IsEnum && !type.IsUnion) ||
+				type.IsTypedPrimitive ||
+				type.IsEnum ||
 				type == typeof(String) ||
 				type == typeof(DateTime) ||
 				generic?.UnspecializedType == typeof(Nullable<>) &&
-				IsPrimitive(generic.GetGenericArg(0));
+				IsPrimitiveStrict(generic.GetGenericArg(0));
 		}
 
-		public static bool IsList(Type type)
+		public static bool IsPrimitive<TValue>(Type type, TValue object)
+			where TValue : ISerializable
+		{
+			return IsPrimitiveStrict(object.__SerializeActualType);
+		}
+
+		public static bool IsListStrict(Type type)
 		{
 			for (let i in type.Interfaces)
 			{
@@ -37,9 +47,32 @@ namespace Serialize.Util
 				type.IsArray;
 		}
 
-		public static bool IsMap(Type type)
+		public static bool IsList<T>(Type type, T object)
+			where T : ISerializable
 		{
-			return !IsPrimitive(type) && !IsList(type);
-		}	
+			return IsListStrict(object.__SerializeActualType);
+		}
+
+		public static bool IsMapStrict(Type type)
+		{
+			return !IsPrimitiveStrict(type) && !IsListStrict(type);
+		}
+
+		public static bool IsMapStrict<T>()
+			where T : ISerializable
+		{
+			return IsMapStrict(typeof(T));
+		}
+
+		public static bool IsMap<T>(Type type, T object)
+			where T : ISerializable
+		{
+			return !IsPrimitive(typeof(T), object) && !IsList(typeof(T), object);
+		}
+
+		public static bool CanBePrimitiveOrMap(Type type)
+		{
+			return type.IsEnum && type.IsUnion;
+		}
 	}
 }

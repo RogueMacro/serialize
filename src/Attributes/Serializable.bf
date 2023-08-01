@@ -34,9 +34,20 @@ namespace Serialize
 
 			if (type.IsEnum)
 			{
+				if (type.IsUnion)
+					WriteSerializeInnerTypeEnum(type);
+
 				WriteSerializeForEnum(type);
 				return;
 			}
+
+//			Compiler.EmitTypeBody(type,
+//				scope $"""
+//				[NoShow]
+//				public Type __SerializeActualType => typeof(Self);
+//
+//
+//				""");
 
 			int fieldCount = 0;
 			for (let field in type.GetFields())
@@ -54,6 +65,7 @@ namespace Serialize
 					{{
 					case .InOrder:
 						{{
+
 				""");
 
 			WriteSerializeInOrder(type);
@@ -63,6 +75,7 @@ namespace Serialize
 						}}
 					case .PrimitivesArraysMaps:
 						{{
+
 				""");
 
 			WriteSerializePrimitivesArraysMaps(type);
@@ -72,6 +85,7 @@ namespace Serialize
 						}}
 					case .MapsLast:
 						{{
+
 				""");
 
 			WriteSerializeMapsLast(type);
@@ -93,7 +107,7 @@ namespace Serialize
 
 				if (!f)
 					fieldList.Append(", ");
-				fieldList.AppendF("\"{}\"", field.Name);
+				fieldList.AppendF("\"{}\"", SerializedName(field));
 				f = false;
 			}
 
@@ -109,11 +123,11 @@ namespace Serialize
 					Self self = {(type.IsValueType ? "" : "new ")}Self();
 					bool ok = false;
 					{(type.IsValueType ? "" : "defer {{ if (!ok) delete self; }}\n")}
-					System.Collections.List<StringView> fieldsLeft = scope .(){{ {fieldList} }};
+					System.Collections.List<System.StringView> fieldsLeft = scope .(){{ {fieldList} }};
 
 					Try!(deserializer.DeserializeStructStart({fieldCount}));
 
-					delegate Result<void, Serialize.FieldDeserializeError>(StringView) mapField = scope [&] (field) => {{
+					delegate System.Result<void, Serialize.FieldDeserializeError>(System.StringView) mapField = scope [&] (field) => {{
 						switch (field)
 						{{
 
@@ -124,10 +138,12 @@ namespace Serialize
 				if (!IsSerializableField(field))
 					continue;
 
+				let fieldSerName = SerializedName(field);
+
 				if (field.FieldType.IsNullable || field.FieldType.IsObject)
 					Compiler.EmitTypeBody(type,
 						scope $"""
-								case "{field.Name}":
+								case "{fieldSerName}":
 									if (!deserializer.DeserializeNull())
 									{{
 										let result = {field.FieldType}.Deserialize(deserializer);
@@ -135,19 +151,19 @@ namespace Serialize
 											return .Err(.DeserializationError);
 										self.{field.Name} = result.Get();
 									}}
-									fieldsLeft.Remove("{field.Name}");
+									fieldsLeft.Remove("{fieldSerName}");
 									break;
 	
 						""");
 				else
 					Compiler.EmitTypeBody(type,
 					scope $"""
-							case "{field.Name}":
+							case "{fieldSerName}":
 								let result = {field.FieldType}.Deserialize(deserializer);
 								if (result case .Err)
 									return .Err(.DeserializationError);
 								self.{field.Name} = (.)result.Get();
-								fieldsLeft.Remove("{field.Name}");
+								fieldsLeft.Remove("{fieldSerName}");
 								break;
 
 					""");
@@ -157,6 +173,26 @@ namespace Serialize
 			Compiler.EmitTypeBody(type,
 				scope $"""
 						default:
+
+				""");
+
+//			for (let field in type.GetFields())
+//			{
+//				if (!IsSerializableField(field))
+//					continue;
+//
+//				if (field.GetCustomAttribute<SerializeFieldAttribute>() case .Ok(let attr))
+//				{
+//					Compiler.EmitTypeBody(type,
+//						scope $"""
+//									fieldsLeft.Remove(\"{field.Name}\");
+//
+//						""");
+//				}
+//			}
+
+			Compiler.EmitTypeBody(type,
+				scope $"""
 							return .Err(.UnknownField);
 						}}
 
@@ -175,13 +211,14 @@ namespace Serialize
 
 			for (let field in type.GetFields())
 			{
+				let fieldSerName = SerializedName(field);
 				if (field.GetCustomAttribute<SerializeFieldAttribute>() case .Ok(let attr))
 				{
 					if (attr.Default != null)
 					{
 						Compiler.EmitTypeBody(type,
 							scope $"""
-								if (fieldsLeft.Contains("{field.Name}"))
+								if (fieldsLeft.Contains("{fieldSerName}"))
 									self.{field.Name} = {attr.Default}();
 
 
@@ -191,7 +228,7 @@ namespace Serialize
 					{
 						Compiler.EmitTypeBody(type,
 							scope $"""
-								if (fieldsLeft.Contains("{field.Name}"))
+								if (fieldsLeft.Contains("{fieldSerName}"))
 									self.{field.Name} = {attr.DefaultValue};
 
 
@@ -208,7 +245,7 @@ namespace Serialize
 					{
 						Compiler.EmitTypeBody(type,
 							scope $"""
-								fieldsLeft.Remove("{field.Name}");
+								fieldsLeft.Remove("{SerializedName(field)}");
 
 							""");
 					}
@@ -219,14 +256,14 @@ namespace Serialize
 				scope $"""
 					if (!fieldsLeft.IsEmpty)
 					{{
-						String message = new .();
+						System.String message = new .();
 						if (fieldsLeft.Count == 1)
 							message.Append("Missing field ");
 						else
 							message.Append("Missing fields ");
 
 						bool first = true;
-						for (StringView field in fieldsLeft)
+						for (System.StringView field in fieldsLeft)
 						{{
 							if (!first)
 								message.Append(", ");
@@ -253,6 +290,8 @@ namespace Serialize
 			if (!IsSerializableField(field))
 				return;
 
+			let fieldSerName = SerializedName(field);
+
 			let serializeAttribute = field.GetCustomAttribute<SerializeFieldAttribute>();
 			if (serializeAttribute case .Ok(let attr))
 			{
@@ -265,20 +304,33 @@ namespace Serialize
 			}
 
 			if (field.FieldType.IsNullable || field.FieldType.IsObject)
+			{
 				Compiler.EmitTypeBody(type,
 					scope $"""
 
-								//if ({field.Name} == null) serializer.SerializeNull();
-								/*else*/ serializer.SerializeMapEntry("{field.Name}", {field.Name}, {first});
+								if ({field.Name} == null) serializer.SerializeNull();
+								else serializer.SerializeMapEntry("{fieldSerName}", {field.Name}, {first});
 
 					""");
+			}
 			else
+			{
+				if (serializeAttribute case .Ok(let attr) && attr.DefaultValue != null)
+				{
+					Compiler.EmitTypeBody(type,
+						scope $"""
+
+									if ({field.Name} != {attr.DefaultValue})
+						    
+						""");
+				}
+
 				Compiler.EmitTypeBody(type,
 				scope $"""
-
-							serializer.SerializeMapEntry("{field.Name}", {field.Name}, {first});
+							serializer.SerializeMapEntry("{fieldSerName}", {field.Name}, {first});
 
 				""");
+			}
 
 			if (serializeAttribute case .Ok(let attr))
 			{
@@ -314,9 +366,9 @@ namespace Serialize
 
 			for (let field in type.GetFields())
 			{
-				if (Util.IsPrimitive(field.FieldType))
+				if (Util.IsPrimitiveStrict(field.FieldType))
 					primitives.Add(field.Name);
-				else if (Util.IsList(field.FieldType))
+				else if (Util.IsListStrict(field.FieldType))
 					arrays.Add(field.Name);
 				else
 					maps.Add(field.Name);
@@ -343,7 +395,7 @@ namespace Serialize
 
 			for (let field in type.GetFields())
 			{
-				if (Util.IsPrimitive(field.FieldType) || Util.IsList(field.FieldType))
+				if (Util.IsPrimitiveStrict(field.FieldType) || Util.IsListStrict(field.FieldType))
 					WriteSerializeForField(type, field, ref first);
 				else
 					maps.Add(field.Name);
@@ -376,59 +428,73 @@ namespace Serialize
 				if (field.Name == "$payload" || field.Name == "$discriminator")
 					continue;
 
+				let fieldSerName = SerializedName(field);
+
 				if (type.IsUnion)
 				{
-					String tupleValues = scope .();
-					bool firstTupleValue = true;
-					for (let tupleField in field.FieldType.GetFields())
-					{
-						if (!firstTupleValue)
-							tupleValues.Append(", ");
-						tupleValues.AppendF("let _{}", tupleField.Name);
-						firstTupleValue = false;
-					}
-
-					Compiler.EmitTypeBody(type,
-						scope $"""
-							case .{field.Name}({tupleValues}):
-								serializer.SerializeMapStart({field.FieldType.FieldCount});
-
-						""");
-
-					String first = "true";
-					if (tag != null)
+					if (field.FieldType.FieldCount == 1)
 					{
 						Compiler.EmitTypeBody(type,
 							scope $"""
-									serializer.SerializeMapEntry("{tag}", "{field.Name}", true);
+								case .{field.Name}(let value):
+									value.Serialize(serializer);
 
 							""");
-
-						first = "false";
 					}
-					
-					for (let tupleField in field.FieldType.GetFields())
+					else
 					{
+						String tupleValues = scope .();
+						bool firstTupleValue = true;
+						for (let tupleField in field.FieldType.GetFields())
+						{
+							if (!firstTupleValue)
+								tupleValues.Append(", ");
+							tupleValues.AppendF("let _{}", tupleField.Name);
+							firstTupleValue = false;
+						}
+
 						Compiler.EmitTypeBody(type,
 							scope $"""
-									serializer.SerializeMapEntry("{tupleField.Name}", _{tupleField.Name}, {first});
+								case .{field.Name}({tupleValues}):
+									serializer.SerializeMapStart({field.FieldType.FieldCount});
 
 							""");
-						first = "false";
+
+						String first = "true";
+						if (tag != null)
+						{
+							Compiler.EmitTypeBody(type,
+								scope $"""
+										serializer.SerializeMapEntry("{tag}", "{fieldSerName}", true);
+
+								""");
+
+							first = "false";
+						}
+
+						for (let tupleField in field.FieldType.GetFields())
+						{
+							Compiler.EmitTypeBody(type,
+								scope $"""
+										serializer.SerializeMapEntry("{SerializedName(tupleField)}", _{tupleField.Name}, {first});
+
+								""");
+							first = "false";
+						}
+
+						Compiler.EmitTypeBody(type,
+							scope $"""
+									serializer.SerializeMapEnd();
+
+							""");
 					}
-
-					Compiler.EmitTypeBody(type,
-						scope $"""
-								serializer.SerializeMapEnd();
-
-						""");
 				}
 				else
 				{
 					Compiler.EmitTypeBody(type,
 						scope $"""
 							case .{field.Name}:
-								serializer.SerializeString("{field.Name}");
+								serializer.SerializeString("{fieldSerName}");
 
 						""");
 				}
@@ -462,6 +528,8 @@ namespace Serialize
 					if (field.Name == "$payload" || field.Name == "$discriminator")
 						continue;
 
+					let fieldSerName = SerializedName(field);
+
 					bool needsOk = false;
 					for (let tupleField in field.FieldType.GetFields())
 					{
@@ -474,7 +542,7 @@ namespace Serialize
 
 					Compiler.EmitTypeBody(type,
 						scope $"""
-							deserializer.Reader.[Friend]Position = pos;
+							deserializer.Reader.Position = pos;
 							deserializer.PushState();
 							result = Deserialize{field.Name}();
 							deserializer.PopState();
@@ -519,7 +587,7 @@ namespace Serialize
 								tupleFieldList.Append(", ");
 							}
 							tupleValueList.AppendF("_{}", tupleField.Name);
-							tupleFieldList.AppendF("\"{}\"", tupleField.Name);
+							tupleFieldList.AppendF("\"{}\"", SerializedName(tupleField));
 	
 							Compiler.EmitTypeBody(type,
 								scope $"""
@@ -540,8 +608,8 @@ namespace Serialize
 	
 						Compiler.EmitTypeBody(type,
 							scope $"""
-									System.Collections.List<StringView> fieldsLeft = scope .(){{ {tupleFieldList} }};
-									delegate Result<void, Serialize.FieldDeserializeError>(StringView) mapField = scope [&] (field) => {{
+									System.Collections.List<System.StringView> fieldsLeft = scope .(){{ {tupleFieldList} }};
+									delegate Result<void, Serialize.FieldDeserializeError>(System.StringView) mapField = scope [&] (field) => {{
 										switch (field)
 										{{
 	
@@ -556,7 +624,7 @@ namespace Serialize
 												if (tag case .Err)
 													return .Err(.DeserializationError);
 												defer delete tag.Value;
-												if (tag != "{field.Name}")
+												if (tag != "{fieldSerName}")
 													return .Err(.DeserializationError);
 												fieldsLeft.Remove("{tag}");
 												return .Ok;
@@ -568,12 +636,12 @@ namespace Serialize
 						{
 							Compiler.EmitTypeBody(type,
 								scope $"""
-											case "{tupleField.Name}":
+											case "{SerializedName(tupleField)}":
 												let result = {tupleField.FieldType}.Deserialize(deserializer);
 												if (result case .Err)
 													return .Err(.DeserializationError);
 												_{tupleField.Name} = (.)result.Get();
-												fieldsLeft.Remove("{tupleField.Name}");
+												fieldsLeft.Remove("{SerializedName(tupleField)}");
 												return .Ok;
 	
 								""");
@@ -631,7 +699,7 @@ namespace Serialize
 				{
 					Compiler.EmitTypeBody(type,
 						scope $"""
-							case "{field.Name}": return .{field.Name};
+							case "{SerializedName(field)}": return .{field.Name};
 
 						""");
 				}
@@ -652,58 +720,59 @@ namespace Serialize
 				}}
 				""");
 		}
-	}
-
-	struct SerializeFieldAttribute : Attribute, IOnFieldInit
-	{
-		public bool Serialize;
-
-		public bool Optional
-		{
-			get => HasDefault || (_optional ?? false);
-			set mut => _optional = value;
-		}
-
-		public String Default = null;
-		public String DefaultValue = null;
-
-		public String NumberFormat = null;
-
-		public bool HasDefault => Default != null || DefaultValue != null;
-
-		private Nullable<bool> _optional = null;
-
-		public this(bool serialize = true)
-		{
-			Serialize = serialize;
-		}
 
 		[Comptime]
-		public void OnFieldInit(FieldInfo fieldInfo, Self* prev)
+		void WriteSerializeInnerTypeEnum(Type type)
 		{
-			let type = fieldInfo.FieldType;
+			Compiler.EmitTypeBody(type,
+				"""
+				[NoShow]
+				public Type __SerializeActualType
+				{
+					get
+					{
+						switch (this)
+						{
 
-			if (_optional.HasValue && !_optional.Value && HasDefault)
-				Runtime.FatalError("Specifying a default value forces a field to be optional");
+				""");
 
-			if (NumberFormat != null && !IsNumber(type))
+			for (let field in type.GetFields())
 			{
-				let generic = type as SpecializedGenericType;
-				if (generic != null && generic.UnspecializedType == typeof(List<>))
+				if (field.Name == "$payload" || field.Name == "$discriminator")
+					continue;
+
+				String fieldType = field.FieldType.ToString(.. scope .());
+				if (!fieldType.Contains(','))
 				{
-					if (!IsNumber(generic.GetGenericArg(0)))
-						Runtime.FatalError("List must have numeric values to use NumberFormat");
-				}
-				else if (generic != null && generic.UnspecializedType == typeof(Dictionary<>))
-				{
-					if (!IsNumber(generic.GetGenericArg(1)))
-						Runtime.FatalError("Dictionary must have numeric values to use NumberFormat");
-				}
-				else
-					Runtime.FatalError(scope $"Field type is not a number: {!IsNumber(generic.GetGenericArg(0))}");
+					fieldType.Remove(0, 1);
+					fieldType.RemoveFromEnd(1);
+				}	
+				Compiler.EmitTypeBody(type,
+					scope $"""
+							case .{field.Name}: return typeof({fieldType});
+
+					""");
 			}
 
-			bool IsNumber(Type type) => type.IsInteger || type.IsFloatingPoint;
+			Compiler.EmitTypeBody(type,
+				"""
+						}
+					}
+				}
+
+
+				""");
+		}
+
+		StringView SerializedName(FieldInfo field)
+		{
+			if (field.GetCustomAttribute<SerializeFieldAttribute>() case .Ok(let attr))
+			{
+				if (attr.Rename != null)
+					return attr.Rename;
+			}
+
+			return field.Name;
 		}
 	}
 }
