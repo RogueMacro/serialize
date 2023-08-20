@@ -2,13 +2,19 @@ using System;
 
 namespace Serialize
 {
-	interface ISerializeAsPrimitive
-	{
-		
-	}
+//	interface ISerializeAs
+//	{
+//		SerializeAs SerializeAs { get; }
+//	}
+//
+//	enum SerializeAs
+//	{
+//		Primitive,
+//		List,
+//		Map
+//	}
 
-	interface ISerializeAsList
-	{
+	interface ISerializeAsPrimitive {}
 
-	}
+	interface ISerializeAsList {}
 }

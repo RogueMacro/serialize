@@ -4,30 +4,33 @@ using System.Reflection;
 
 namespace Serialize
 {
-	struct SerializeFieldAttribute : Attribute, IOnFieldInit
+	struct SerializeAttribute : Attribute, IOnFieldInit
 	{
-		public bool Serialize;
-
 		public String Rename = null;
-
-		public bool Optional
-		{
-			get => HasDefault || (_optional ?? false);
-			set mut => _optional = value;
-		}
-
 		public String Default = null;
 		public String DefaultValue = null;
 
 		public String NumberFormat = null;
 
-		public bool HasDefault => Default != null || DefaultValue != null;
+		public bool Serialize => _flag != .Skip;
+		public bool Optional => _flag == .Optional || _hasDefault;
+		public bool Flatten => _flag == .Flatten;
 
-		private Nullable<bool> _optional = null;
+		private bool _hasDefault => Default != null || DefaultValue != null;
 
-		public this(bool serialize = true)
+		private Flag _flag;
+
+		enum Flag
 		{
-			Serialize = serialize;
+			None,
+			Skip,
+			Optional,
+			Flatten
+		}
+
+		public this(Flag flag = .None)
+		{
+			_flag = flag;
 		}
 
 		[Comptime]
@@ -35,8 +38,18 @@ namespace Serialize
 		{
 			let type = fieldInfo.FieldType;
 
-			if (_optional.HasValue && !_optional.Value && HasDefault)
-				Runtime.FatalError("Specifying a default value forces a field to be optional");
+			if (Flatten)
+			{
+				let generic = type as SpecializedGenericType;
+				if (generic == null ||
+					generic.UnspecializedType != typeof(Dictionary<>))
+				{
+					Runtime.FatalError("Flat field needs to be of type Dictionary<>");
+				}
+
+				if (Rename != null)
+					Runtime.FatalError("Cannot rename a flat field");
+			}
 
 			if (NumberFormat != null && !IsNumber(type))
 			{

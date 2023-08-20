@@ -18,8 +18,8 @@ namespace Serialize
 			if (type.IsPointer)
 				return false;
 
-			if (field.GetCustomAttribute<SerializeFieldAttribute>() case .Ok(let attr))
-				return attr.Serialize;
+			if (field.GetCustomAttribute<SerializeAttribute>() case .Ok(let attr))
+				return attr.Serialize && !attr.Flatten;
 
 			if (field.IsStatic || field.IsConst || field.IsPrivate)
 				return false;
@@ -41,18 +41,24 @@ namespace Serialize
 				return;
 			}
 
-//			Compiler.EmitTypeBody(type,
-//				scope $"""
-//				[NoShow]
-//				public Type __SerializeActualType => typeof(Self);
-//
-//
-//				""");
-
+			FieldInfo? flatField = null;
+			Type flatValueType = null;
 			int fieldCount = 0;
 			for (let field in type.GetFields())
+			{
 				if (IsSerializableField(field))
 					fieldCount++;
+				else if (field.GetCustomAttribute<SerializeAttribute>() case .Ok(let attr))
+				{
+					if (attr.Flatten)
+					{
+						Runtime.Assert(flatField == null, "Serializable can only have one flat field");
+
+						flatField = field;
+						flatValueType = (field.FieldType as SpecializedGenericType).GetGenericArg(1);
+					}
+				}
+			}
 
 			Compiler.EmitTypeBody(type,
 				scope $"""
@@ -78,26 +84,8 @@ namespace Serialize
 
 				""");
 
-			WriteSerializePrimitivesArraysMaps(type);
-
-			Compiler.EmitTypeBody(type,
-				scope $"""
-						}}
-					case .MapsLast:
-						{{
-
-				""");
-
-			WriteSerializeMapsLast(type);
-
-			Compiler.EmitTypeBody(type,
-				scope $"""
-						}}
-					}}
-
-				""");
+			WriteSerializePrimitivesArraysMaps(type, flatField, flatValueType);
 			
-
 			String fieldList = scope .();
 			bool f = true;
 			for (let field in type.GetFields())
@@ -141,9 +129,12 @@ namespace Serialize
 				let fieldSerName = SerializedName(field);
 
 				if (field.FieldType.IsNullable || field.FieldType.IsObject)
+				{
 					Compiler.EmitTypeBody(type,
 						scope $"""
 								case "{fieldSerName}":
+									System.Diagnostics.Debug.Assert(fieldsLeft.Contains("{fieldSerName}"));
+
 									if (!deserializer.DeserializeNull())
 									{{
 										let result = {field.FieldType}.Deserialize(deserializer);
@@ -155,10 +146,14 @@ namespace Serialize
 									break;
 	
 						""");
+				}
 				else
+				{
 					Compiler.EmitTypeBody(type,
 					scope $"""
 							case "{fieldSerName}":
+								System.Diagnostics.Debug.Assert(fieldsLeft.Contains("{fieldSerName}"));
+
 								let result = {field.FieldType}.Deserialize(deserializer);
 								if (result case .Err)
 									return .Err(.DeserializationError);
@@ -167,52 +162,117 @@ namespace Serialize
 								break;
 
 					""");
+				}
 			}
 
+			if (flatField != null)
+			{
+				let flat = flatField.Value;
+				let valueType = (flat.FieldType as SpecializedGenericType).GetGenericArg(1);
+				if (valueType.IsNullable || valueType.IsObject)
+				{
+					Compiler.EmitTypeBody(type,
+						scope $"""
+								default:
+									System.Diagnostics.Debug.Assert(self.{flat.Name} == null || !self.{flat.Name}.ContainsKeyAlt(field));
+
+									if (!deserializer.DeserializeNull())
+									{{
+										let result = {valueType}.Deserialize(deserializer);
+										if (result case .Err)
+											return .Err(.DeserializationError);
+										if (self.{flat.Name} == null)
+											self.{flat.Name} = new .();
+										self.{flat.Name}[new .(field)] = result.Get();
+									}}
+									else
+									{{
+										self.{flat.Name}[new .(field)] = null;
+									}}
+						""");
+				}
+				else
+				{
+					Compiler.EmitTypeBody(type,
+					scope $"""
+							default:
+								System.Diagnostics.Debug.Assert(self.{flat.Name} == null || !self.{flat.Name}.ContainsKeyAlt(field));
+
+								let result = {valueType}.Deserialize(deserializer);
+								if (result case .Err)
+									return .Err(.DeserializationError);
+
+								if (self.{flat.Name} == null)
+									self.{flat.Name} = new .();
+								self.{flat.Name}[new .(field)] = (.)result.Get();
+					""");
+				}
+			}
+			else
+			{
+				Compiler.EmitTypeBody(type,
+					"""
+							default:
+								return .Err(.UnknownField);
+					""");
+			}
 
 			Compiler.EmitTypeBody(type,
 				scope $"""
-						default:
-
-				""");
-
-//			for (let field in type.GetFields())
-//			{
-//				if (!IsSerializableField(field))
-//					continue;
-//
-//				if (field.GetCustomAttribute<SerializeFieldAttribute>() case .Ok(let attr))
-//				{
-//					Compiler.EmitTypeBody(type,
-//						scope $"""
-//									fieldsLeft.Remove(\"{field.Name}\");
-//
-//						""");
-//				}
-//			}
-
-			Compiler.EmitTypeBody(type,
-				scope $"""
-							return .Err(.UnknownField);
+							
 						}}
 
 						return .Ok;
 					}};
 
 					bool firstField = true;
-					for (int i in 0..<{fieldCount})
-					{{
-						Try!(deserializer.DeserializeStructField(mapField, fieldsLeft, firstField));
-						firstField = false;
-					}}
-
 
 				""");
 
+			if (flatField != null)
+			{
+				Compiler.EmitTypeBody(type,
+					scope $"""
+						int readFieldCount = {fieldCount};
+						FieldLoop: for (int _ <= readFieldCount)
+						{{
+							if (deserializer.DeserializeStructField(mapField, fieldsLeft, firstField) case .Err(let err))
+							{{
+								switch (err)
+								{{
+								case .UnknownField: break FieldLoop;
+								case .DeserializationError: return .Err;
+								}}
+							}}
+							
+							readFieldCount = {fieldCount} + (self.{flatField?.Name}?.Count ?? 0);
+							firstField = false;
+						}}
+
+
+					""");
+			}
+			else
+			{
+				Compiler.EmitTypeBody(type,
+					scope $"""
+						for (int _ < {fieldCount})
+						{{
+							Try!(deserializer.DeserializeStructField(mapField, fieldsLeft, firstField));
+							firstField = false;
+						}}
+
+
+					""");
+			}
+
 			for (let field in type.GetFields())
 			{
+				if (!IsSerializableField(field))
+					continue;
+
 				let fieldSerName = SerializedName(field);
-				if (field.GetCustomAttribute<SerializeFieldAttribute>() case .Ok(let attr))
+				if (field.GetCustomAttribute<SerializeAttribute>() case .Ok(let attr))
 				{
 					if (attr.Default != null)
 					{
@@ -239,7 +299,38 @@ namespace Serialize
 
 			for (let field in type.GetFields())
 			{
-				if (field.GetCustomAttribute<SerializeFieldAttribute>() case .Ok(let attr))
+				if (field.GetCustomAttribute<SerializeAttribute>() case .Ok(let attr) && attr.Flatten)
+				{
+					if (attr.Default != null)
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+								if (self.{field.Name} == null)
+									self.{field.Name} = {attr.Default}();
+
+
+							""");
+					}
+					else if (attr.DefaultValue != null)
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+								if (self.{field.Name} == null)
+									self.{field.Name} = {attr.DefaultValue};
+
+
+							""");
+					}
+				}
+			}
+
+			for (let field in type.GetFields())
+			{
+				if (!IsSerializableField(field))
+					continue;
+
+
+				if (field.GetCustomAttribute<SerializeAttribute>() case .Ok(let attr))
 				{
 					if (attr.Optional)
 					{
@@ -292,7 +383,7 @@ namespace Serialize
 
 			let fieldSerName = SerializedName(field);
 
-			let serializeAttribute = field.GetCustomAttribute<SerializeFieldAttribute>();
+			let serializeAttribute = field.GetCustomAttribute<SerializeAttribute>();
 			if (serializeAttribute case .Ok(let attr))
 			{
 				if (attr.NumberFormat != null)
@@ -308,26 +399,26 @@ namespace Serialize
 				Compiler.EmitTypeBody(type,
 					scope $"""
 
-								if ({field.Name} == null) serializer.SerializeNull();
-								else serializer.SerializeMapEntry("{fieldSerName}", {field.Name}, {first});
+								if (this.{field.Name} == null) serializer.SerializeNull();
+								else serializer.SerializeMapEntry("{fieldSerName}", this.{field.Name}, {first});
 
 					""");
 			}
 			else
 			{
-				if (serializeAttribute case .Ok(let attr) && attr.DefaultValue != null)
-				{
-					Compiler.EmitTypeBody(type,
-						scope $"""
-
-									if ({field.Name} != {attr.DefaultValue})
-						    
-						""");
-				}
+//				if (serializeAttribute case .Ok(let attr) && attr.DefaultValue != null)
+//				{
+//					Compiler.EmitTypeBody(type,
+//						scope $"""
+//
+//									if (this.{field.Name} != {attr.DefaultValue})
+//						    
+//						""");
+//				}
 
 				Compiler.EmitTypeBody(type,
 				scope $"""
-							serializer.SerializeMapEntry("{fieldSerName}", {field.Name}, {first});
+							serializer.SerializeMapEntry("{fieldSerName}", this.{field.Name}, {first});
 
 				""");
 			}
@@ -357,53 +448,245 @@ namespace Serialize
 		}
 
 		[Comptime]
-		void WriteSerializePrimitivesArraysMaps(Type type)
+		void WriteSerializePrimitivesArraysMaps(Type type, FieldInfo? flatField, Type flatValueType)
 		{
 			String first = "true";
-			List<StringView> primitives = scope .();
-			List<StringView> arrays = scope .();
-			List<StringView> maps = scope .();
+			List<FieldInfo> primitives = scope .();
+			List<FieldInfo> arrays = scope .();
+			List<FieldInfo> maps = scope .();
 
 			for (let field in type.GetFields())
 			{
-				if (Util.IsPrimitiveStrict(field.FieldType))
-					primitives.Add(field.Name);
-				else if (Util.IsListStrict(field.FieldType))
-					arrays.Add(field.Name);
+				if (!IsSerializableField(field))
+					continue;
+
+				if (Util.IsPrimitive(field.FieldType))
+					primitives.Add(field);
+				else if (Util.IsList(field.FieldType))
+					arrays.Add(field);
 				else
-					maps.Add(field.Name);
+					maps.Add(field);
 			}
 
-			for (let field in type.GetFields())
-				if (primitives.Contains(field.Name))
-					WriteSerializeForField(type, field, ref first);
+			for (let field in primitives)
+				WriteSerializeForField(type, field, ref first);
 
-			for (let field in type.GetFields())
-				if (arrays.Contains(field.Name))
-					WriteSerializeForField(type, field, ref first);
-
-			for (let field in type.GetFields())
-				if (maps.Contains(field.Name))
-					WriteSerializeForField(type, field, ref first);
-		}
-
-		[Comptime]
-		void WriteSerializeMapsLast(Type type)
-		{
-			String first = "true";
-			List<StringView> maps = scope .();
-
-			for (let field in type.GetFields())
+			if (flatField != null)
 			{
-				if (Util.IsPrimitiveStrict(field.FieldType) || Util.IsListStrict(field.FieldType))
-					WriteSerializeForField(type, field, ref first);
-				else
-					maps.Add(field.Name);
+				let flat = flatField.Value;
+				if (flatValueType == typeof(Variant))
+				{
+					if (primitives.IsEmpty)
+					{
+						first = "first";
+						Compiler.EmitTypeBody(type,
+							scope $"""
+										bool hasOtherFields = this.{flat.Name} != null && !this.{flat.Name}.IsEmpty;
+										bool first = {(primitives.IsEmpty ? "true" : "false")};
+										if (hasOtherFields)
+										{{
+											for (let (key, value) in this.{flat.Name})
+											{{
+												if (Serialize.Util.Util.IsPrimitive(value.VariantType))
+												{{
+													serializer.SerializeMapEntry(key, value, first);
+													first = false;
+												}}
+											}}
+										}}
+
+							""");
+					}
+					else
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+
+										bool hasOtherFields = this.{flat.Name} != null && !this.{flat.Name}.IsEmpty;
+										if (hasOtherFields)
+										{{
+											for (let (key, value) in this.{flat.Name})
+											{{
+												if (Serialize.Util.Util.IsPrimitive(value.VariantType))
+													serializer.SerializeMapEntry(key, value, false);
+											}}
+										}}
+
+							""");
+					}
+				}
+				else if (Util.IsPrimitive(flatValueType))
+				{
+					if (primitives.IsEmpty)
+					{
+						first = "!hasOtherFields";
+						Compiler.EmitTypeBody(type,
+							scope $"""
+										bool hasOtherFields = this.{flat.Name} != null && !this.{flat.Name}.IsEmpty;
+										if (hasOtherFields)
+										{{
+											bool first = true;
+											for (let (key, value) in this.{flat.Name})
+											{{
+												serializer.SerializeMapEntry(key, value, first);
+												first = false;
+											}}
+										}}
+
+							""");
+					}
+					else
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+
+										if (this.{flat.Name} != null)
+											for (let (key, value) in this.{flat.Name})
+												serializer.SerializeMapEntry(key, value, false);
+
+							""");
+					}
+				}
 			}
 
-			for (let field in type.GetFields())
-				if (maps.Contains(field.Name))
-					WriteSerializeForField(type, field, ref first);
+			for (let field in arrays)
+				WriteSerializeForField(type, field, ref first);
+
+			if (flatField != null)
+			{
+				let flat = flatField.Value;
+				if (flatValueType == typeof(Variant))
+				{
+					if (primitives.IsEmpty && arrays.IsEmpty)
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+
+										if (hasOtherFields)
+										{{
+											for (let (key, value) in this.{flat.Name})
+											{{
+												if (Serialize.Util.Util.IsList(value.VariantType))
+												{{
+													serializer.SerializeMapEntry(key, value, first);
+													first = false;
+												}}
+											}}
+										}}
+
+							""");
+					}
+					else
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+
+										if (hasOtherFields)
+										{{
+											for (let (key, value) in this.{flat.Name})
+											{{
+												if (Serialize.Util.Util.IsList(value.VariantType))
+													serializer.SerializeMapEntry(key, value, false);
+											}}
+										}}
+
+							""");
+					}
+				}
+				else if (Util.IsList(flatValueType))
+				{
+					if (primitives.IsEmpty && arrays.IsEmpty)
+					{
+						first = "!hasOtherFields";
+						Compiler.EmitTypeBody(type,
+							scope $"""
+										bool hasOtherFields = this.{flat.Name} != null && !this.{flat.Name}.IsEmpty;
+										if (hasOtherFields)
+										{{
+											bool first = true;
+											for (let (key, value) in this.{flat.Name})
+											{{
+												serializer.SerializeMapEntry(key, value, first);
+												first = false;
+											}}
+										}}
+
+							""");
+					}
+					else
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+
+										if (this.{flat.Name} != null)
+											for (let (key, value) in this.{flat.Name})
+												serializer.SerializeMapEntry(key, value, false);			
+
+							""");
+					}
+				}
+			}
+
+			for (let field in maps)
+				WriteSerializeForField(type, field, ref first);
+
+			if (flatField != null)
+			{
+				let flat = flatField.Value;
+				if (flatValueType == typeof(Variant))
+				{
+					Compiler.EmitTypeBody(type,
+						scope $"""
+
+									if (this.{flat.Name} != null)
+									{{
+										for (let (key, value) in this.{flat.Name})
+										{{
+											if (Serialize.Util.Util.IsMap(value.VariantType))
+												serializer.SerializeMapEntry(key, value, false);
+										}}
+									}}
+
+						""");
+				}
+				else if (Util.IsMap(flatValueType))
+				{
+					if (primitives.IsEmpty && arrays.IsEmpty && maps.IsEmpty)
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+										if (this.{flat.Name} != null)
+										{{
+											bool first = true;
+											for (let (key, value) in this.{flat.Name})
+											{{
+												serializer.SerializeMapEntry(key, value, first);
+												first = false;
+											}}
+										}}
+
+							""");
+					}
+					else
+					{
+						Compiler.EmitTypeBody(type,
+							scope $"""
+
+										if (this.{flat.Name} != null)
+											for (let (key, value) in this.{flat.Name})
+												serializer.SerializeMapEntry(key, value, false);
+
+							""");
+					}
+				}
+			}
+
+			Compiler.EmitTypeBody(type,
+				scope $"""
+						}}
+					}}
+
+				""");
 		}
 
 		[Comptime]
@@ -505,7 +788,7 @@ namespace Serialize
 					}}
 				}}
 
-				public static Result<Self> Deserialize<D>(D deserializer)
+				public static System.Result<Self> Deserialize<D>(D deserializer)
 					where D : Serialize.Implementation.IDeserializer
 				{{
 				
@@ -516,7 +799,7 @@ namespace Serialize
 				Compiler.EmitTypeBody(type,
 					scope $"""
 						let pos = deserializer.Reader.Position;
-						Result<Self> result = default;
+						System.Result<Self> result = default;
 
 
 					""");
@@ -609,7 +892,7 @@ namespace Serialize
 						Compiler.EmitTypeBody(type,
 							scope $"""
 									System.Collections.List<System.StringView> fieldsLeft = scope .(){{ {tupleFieldList} }};
-									delegate Result<void, Serialize.FieldDeserializeError>(System.StringView) mapField = scope [&] (field) => {{
+									delegate System.Result<void, Serialize.FieldDeserializeError>(System.StringView) mapField = scope [&] (field) => {{
 										switch (field)
 										{{
 	
@@ -712,6 +995,7 @@ namespace Serialize
 						DeserializeError error = new .(new $"Unknown enum value '{{str}}'", deserializer, end - start, start);
 						deserializer.SetError(error);
 						return .Err;
+
 					""");
 			}
 
@@ -766,7 +1050,7 @@ namespace Serialize
 
 		StringView SerializedName(FieldInfo field)
 		{
-			if (field.GetCustomAttribute<SerializeFieldAttribute>() case .Ok(let attr))
+			if (field.GetCustomAttribute<SerializeAttribute>() case .Ok(let attr))
 			{
 				if (attr.Rename != null)
 					return attr.Rename;

@@ -5,7 +5,7 @@ using Serialize.Implementation;
 
 namespace Serialize
 {
-	class Serialize<F>
+	class Serializer<F>
 		where F : IFormat, class, new, delete
 	{
 		private F _format ~ if (_ownsFormat) delete _;

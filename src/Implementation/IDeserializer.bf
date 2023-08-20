@@ -16,7 +16,7 @@ namespace Serialize.Implementation
 
 		Result<void> DeserializeStructStart(int size);
 		Result<void> DeserializeStructEnd();
-		Result<void> DeserializeStructField(
+		Result<void, FieldDeserializeError> DeserializeStructField(
 			delegate Result<void, FieldDeserializeError>(StringView field) deserialize,
 			Span<StringView> fieldsLeft,
 			bool first);

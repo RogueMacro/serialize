@@ -11,7 +11,7 @@ namespace Serialize.Implementation
 
 		SerializeOrder SerializeOrder { get; }
 
-		void SerializeMapStart(int size);
+		void SerializeMapStart(int size, Type callerType = Compiler.CallerType);
 		void SerializeMapEntry<TKey, TValue>(TKey key, TValue value, bool first)
 			where TKey : ISerializableKey
 			where TValue : ISerializable;
@@ -49,6 +49,5 @@ namespace Serialize.Implementation
 	{
 		InOrder,              // Don't rearrange fields.
 		PrimitivesArraysMaps, // Primitives, then arrays, then maps.
-		MapsLast              // Primitives and arrays in order, then maps.
 	}
 }
