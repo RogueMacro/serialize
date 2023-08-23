@@ -4,7 +4,12 @@ Serialize is a generic serialization/deserialization framework for Beef.
 
 Compile-time code generation is used for de-/serializing, so there is no need for reflection.
 
-### Supported formats:
+## Compiling
+
+Because of a current IDE bug, in order to compile serialize, first compile with comp-time-debugging enabled.
+There will still be errors, but they won't prevent you from compiling. To make them go away, open `ISerializable.bf`.    
+
+### Supported formats
 
 - [JSON](https://github.com/RogueMacro/json)
 - [TOML](https://github.com/RogueMacro/toml)
