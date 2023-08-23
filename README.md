@@ -77,6 +77,15 @@ static void Main()
 }
 ```
 
+## Configurating the serializer
+
+You can configure the serializer by passing a `IFormat` provider to the constructor. This is the main class of the implementation which takes care of creating specific serializers/deserializers with said config. Here is an example using TOML:
+
+```cs
+Toml config = scope .(pretty: .All); // The 'Toml' class inherits 'IFormat'
+Serializer<Toml> serializer = scope .(config); // The generic argument to 'Serializer' is always a 'IFormat' type.
+```
+
 ## Attributes
 
 ### `[Serializable]`
