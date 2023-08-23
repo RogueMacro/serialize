@@ -34,7 +34,7 @@ static void Main()
     Point point = .() { x = 1, y = 2 };
 
     // Create a serializer with specified format.
-    Serialize<Json> serializer = scope .();
+    Serializer<Json> serializer = scope .();
 
     // Serialize to a JSON string.
     String serialized = serializer.Serialize(point, .. scope String());
@@ -50,6 +50,30 @@ static void Main()
     // y = 2
     Console.WriteLine("x: {}", deserialized.x);
     Console.WriteLine("y: {}", deserialized.y);
+}
+```
+
+Some formats might have static methods for ease of use. For example (hypothetically):
+
+```cs
+using Serialize;
+
+[Serializable]
+struct Point
+{
+    public int x;
+    public int y;
+}
+
+static void Main()
+{
+    Point point = .() { x = 1, y = 2 };
+
+    // Serialize to a JSON string.
+    String serialized = Json.Serialize(point, .. scope String());
+
+    // Prints {"x":1,"y":2}
+    Console.WriteLine(serialized);
 }
 ```
 
