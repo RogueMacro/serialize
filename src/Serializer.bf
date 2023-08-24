@@ -31,7 +31,8 @@ namespace Serialize
 			StringStream stream = scope .(strBuffer, .Reference);
 			ISerializer serializer = _format.CreateSerializer();
 			serializer.NumberFormat = "";
-			serializer.Writer = scope .(stream, .UTF8, 0 /* bufferSize is not used. */);
+			//serializer.Writer = scope .(stream, .UTF8, 0 /* bufferSize is not used. */);
+			serializer.Writer = Console.Out;
 			defer delete serializer;
 
 			_format.Serialize(serializer, value);

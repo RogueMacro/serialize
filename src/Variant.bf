@@ -14,6 +14,12 @@ namespace System
 		public void Serialize<S>(S serializer)
 			where S : ISerializer
 		{
+			if (mStructType == 2)
+			{
+				serializer.SerializeNull();
+				return;
+			}
+
 			switch (VariantType)
 			{
 			case typeof(bool): Serialize!<bool>();
@@ -54,6 +60,9 @@ namespace System
 			TryDeserialize!<DateTime>();
 			TryDeserialize!<List<Variant>>();
 			TryDeserialize!<Dictionary<String, Variant>>();
+
+			if (deserializer.DeserializeNull())
+				return Self.Create<String>(null);
 
 			return .Err;
 

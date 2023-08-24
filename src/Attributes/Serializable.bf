@@ -399,8 +399,8 @@ namespace Serialize
 				Compiler.EmitTypeBody(type,
 					scope $"""
 
-								if (this.{field.Name} == null) serializer.SerializeNull();
-								else serializer.SerializeMapEntry("{fieldSerName}", this.{field.Name}, {first});
+								//if (this.{field.Name} == null) serializer.SerializeNull();
+								/*else*/ serializer.SerializeMapEntry("{fieldSerName}", this.{field.Name}, {first});
 
 					""");
 			}
