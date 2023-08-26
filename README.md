@@ -6,7 +6,7 @@ Compile-time code generation is used for de-/serializing, so there is no need fo
 
 ## Compiling
 
-Because of a current IDE bug, in order to compile serialize, first compile with comp-time-debugging enabled. This can be found in `Build > Debug Comptime`. There will still be errors, but they won't prevent you from compiling. To make them go away, open `ISerializable.bf`.
+Because of a current IDE bug, in order to compile serialize, first compile with comp-time-debugging enabled. This can be found in `Build > Debug Comptime`. There will still be errors, but they won't prevent you from compiling. To make them go away, open `ISerializable.bf`. You can track this issue [here](https://github.com/beefytech/Beef/issues/1817)
 
 ### Supported formats
 
